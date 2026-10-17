@@ -86,6 +86,11 @@
                 <span id="ni-stream-pill" style="display:inline-block;font-size:11px;font-weight:700;transition:color .2s;color:var(--ni-primary,#A0445E)">关</span>
                 流式输出
               </span>
+              <span id="ni-no-think-btn" title="开启后插件所有 API 请求（清洗/判定/归档/偏差分析）都会附带 thinking: disabled 参数。GLM、Kimi 等默认开思考模式的模型将跳过内心戏直接输出，判定从几分钟缩到几十秒。对不支持思考的模型无副作用（参数被忽略）。注意：主聊天的参数请在酒馆自带 API 设置里另配，此项只管插件" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;user-select:none;color:var(--color-text-secondary)">
+                <input type="checkbox" id="ni-no-think-enabled" style="display:none">
+                <span id="ni-no-think-pill" style="display:inline-block;font-size:11px;font-weight:700;transition:color .2s;color:var(--ni-primary,#A0445E)">关</span>
+                非思考模式
+              </span>
             </div>
             <input type="text" id="ni-clean-url" placeholder="https://api.openai.com/v1/chat/completions">
           </div>
@@ -101,6 +106,78 @@
                 <select id="ni-clean-model-select" class="ni-model-select" style="display:none"></select>
               </div>
               <button class="ni-icon-btn ni-model-refresh-btn" id="ni-clean-fetch-models" title="拉取模型列表"><i class="ti ti-refresh"></i></button>
+            </div>
+          </div>
+          <div class="ni-field" style="margin-top:12px;border-top:1px dashed var(--ni-primary-border, rgba(160,68,94,.25));padding-top:10px">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <label title="开启后，清洗小说的请求走下面这套独立接口（含独立的并发与限速通道），不与游玩时的偏差分析、人设更新、剧情归档争用同一个 API 的并发上限">清洗专用 API（可选）</label>
+              <span id="ni-clean-api2-toggle" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;user-select:none;color:var(--color-text-secondary)">
+                <input type="checkbox" id="ni-clean-api2-enabled" style="display:none">
+                <span id="ni-clean-api2-pill" style="display:inline-block;font-size:11px;font-weight:700;transition:color .2s;color:var(--ni-primary,#A0445E)">关</span>
+              </span>
+            </div>
+            <div id="ni-clean-api2-box" style="display:none;margin-top:8px">
+              <div class="ni-field">
+                <label>端点</label>
+                <input type="text" id="ni-clean-api2-url" placeholder="https://…/v1/chat/completions">
+              </div>
+              <div class="ni-field">
+                <label>Key</label>
+                <input type="password" id="ni-clean-api2-key" placeholder="sk-…">
+              </div>
+              <div class="ni-field" style="margin-bottom:0">
+                <label>模型</label>
+                <div class="ni-model-field-wrap">
+                  <div class="ni-model-input-wrap">
+                    <input type="text" id="ni-clean-api2-model" placeholder="留空则沿用上方模型">
+                    <select id="ni-clean-api2-model-select" class="ni-model-select" style="display:none"></select>
+                  </div>
+                  <button class="ni-icon-btn ni-model-refresh-btn" id="ni-clean-api2-fetch-models" title="拉取模型列表"><i class="ti ti-refresh"></i></button>
+                </div>
+              </div>
+              <div class="ni-field" style="margin-bottom:0;margin-top:8px">
+                <label title="只约束走清洗专用 API 的请求；0 表示沿用上方主设置的限速/并发">限流与并发（0 = 沿用主设置）</label>
+                <div class="ni-stream-timeout-row" style="margin-top:4px">
+                  <label class="ni-timeout-label" title="清洗专用 API 每分钟最多发送的请求次数，超出后自动排队">
+                    <i class="ti ti-traffic-lights"></i>每分钟限
+                    <input type="text" id="ni-clean-api2-rate" class="ni-kb-inp" value="0" style="width:28px" inputmode="numeric" pattern="[0-9]*">
+                    <span>次</span>
+                  </label>
+                  <label class="ni-timeout-label" title="清洗专用 API 的最大并发请求数；1 表示串行逐段清洗">
+                    <i class="ti ti-arrows-split"></i>并发
+                    <input type="text" id="ni-clean-api2-concurrency" class="ni-kb-inp" value="0" style="width:28px" inputmode="numeric" pattern="[0-9]*">
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="ni-field" style="margin-top:12px;border-top:1px dashed var(--ni-primary-border, rgba(160,68,94,.25));padding-top:10px">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <label title="开启后，前文偏差分析的请求走下面这套独立凭据（端点/Key/模型），不与清洗、归档和主聊天挤同一个模型额度；模型留空则沿用上方模型。限速与并发沿用主设置（偏差分析同一时刻只跑一个）">偏差分析专用 API（可选）</label>
+              <span id="ni-dev-api-toggle" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;user-select:none;color:var(--color-text-secondary)">
+                <input type="checkbox" id="ni-dev-api-enabled" style="display:none">
+                <span id="ni-dev-api-pill" style="display:inline-block;font-size:11px;font-weight:700;transition:color .2s;color:var(--ni-primary,#A0445E)">关</span>
+              </span>
+            </div>
+            <div id="ni-dev-api-box" style="display:none;margin-top:8px">
+              <div class="ni-field">
+                <label>端点</label>
+                <input type="text" id="ni-dev-api-url" placeholder="https://…/v1/chat/completions">
+              </div>
+              <div class="ni-field">
+                <label>Key</label>
+                <input type="password" id="ni-dev-api-key" placeholder="sk-…">
+              </div>
+              <div class="ni-field" style="margin-bottom:0">
+                <label>模型</label>
+                <div class="ni-model-field-wrap">
+                  <div class="ni-model-input-wrap">
+                    <input type="text" id="ni-dev-api-model" placeholder="留空则沿用上方模型">
+                    <select id="ni-dev-api-model-select" class="ni-model-select" style="display:none"></select>
+                  </div>
+                  <button class="ni-icon-btn ni-model-refresh-btn" id="ni-dev-api-fetch-models" title="拉取模型列表"><i class="ti ti-refresh"></i></button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -482,7 +559,10 @@
                 <label>向量相似度阈值</label>
                 <input type="number" id="ni-recall-thresh" value="0.5" min="0" max="1" step="0.05">
               </div>
-              <div></div>
+              <div class="ni-field" style="margin-bottom:0">
+                <label>前情召回片段数 <i class="ti ti-info-circle" title="聊天注入时额外召回的「原著前情片段」条数。前情讲的是更早章节的内容，与当前对话相似度天然偏低，所以使用独立的宽松阈值。0 = 不召回前情。"></i></label>
+                <input type="number" id="ni-recall-history-topk" value="2" min="0" max="20">
+              </div>
             </div>
           </div>
 
@@ -573,6 +653,11 @@
             <label class="ni-dev-auto-row ni-dev-auto-inline" for="ni-dev-auto-every">
               <span>间隔</span>
               <input type="text" id="ni-dev-auto-every" class="ni-kb-inp" value="10" inputmode="numeric" pattern="[0-9]*">
+              <em>层</em>
+            </label>
+            <label class="ni-dev-cfg-row" for="ni-dev-auto-batch">
+              <span class="ni-dev-setting-label"><i class="ti ti-stack-2"></i><span>自动每次读取</span></span>
+              <input type="text" id="ni-dev-auto-batch" class="ni-kb-inp" value="10" inputmode="numeric" pattern="[0-9]*">
               <em>层</em>
             </label>
             <label class="ni-toggle-wrap ni-dev-auto-check" for="ni-dev-auto-enabled">
@@ -691,6 +776,66 @@
             <div style="font-size:11px;color:var(--color-text-secondary);margin-top:6px;line-height:1.6">
               ① 开启后，向量召回会以当前快穿节点的时间、标题和所在段落为锚点，优先保留节点附近的压缩原文。<br>
               ② 明显晚于当前节点的后续段落会被裁掉，减少剧透和剧情抢跑；不会重新向量化，也不会修改原文数据。
+            </div>
+          </div>
+          <div class="ni-field" style="margin-top:10px;margin-bottom:0">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <label style="display:flex;align-items:center;gap:5px">
+                <i class="ti ti-calendar-event" style="font-size:12px"></i>未来剧情提前注入
+                <span style="font-size:10px;color:var(--color-text-secondary);font-weight:400">后续节点 / 阶段预告</span>
+              </label>
+              <label class="ni-toggle-wrap">
+                <input type="checkbox" id="ni-tb-future-inject" checked>
+                <span class="ni-cfg-chk"><i class="ti ti-check"></i></span>
+              </label>
+            </div>
+            <div style="font-size:11px;color:var(--color-text-secondary);margin-top:6px;line-height:1.6">
+              ① 在「持续提示词」后追加后续待演节点与后续阶段走向，让 AI 提前把握主线节奏、铺垫伏笔，避免长篇聊天里原著信息越来越淡。<br>
+              ② 预告只作后台参考：要求 AI 不提前揭示、不让角色预知，也不得跳过当前节点直接演绎后续内容。<br>
+              ③ 与「轻量化召回」互不影响：后者裁切向量召回里的未来原文，本项负责主动注入未来节点与阶段概括。
+            </div>
+            <div id="ni-tb-future-box" style="margin-top:8px;padding-left:14px">
+              <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--color-text-secondary)">
+                <label style="display:flex;align-items:center;gap:4px" title="从当前节点往后预告几个未归档节点，可跨阶段；0 = 不预告节点">
+                  后续节点
+                  <input type="number" id="ni-tb-future-node-count" value="3" min="0" max="10" step="1" style="width:52px">
+                  个
+                </label>
+                <label style="display:flex;align-items:center;gap:4px" title="当前阶段之后预告几个阶段的走向（优先用阶段概括，没有概括时列出该阶段前两个待演节点标题）；0 = 不预告阶段">
+                  后续阶段
+                  <input type="number" id="ni-tb-future-stage-count" value="1" min="0" max="5" step="1" style="width:52px">
+                  个
+                </label>
+                <label style="display:flex;align-items:center;gap:4px" title="单个节点正文最多保留多少字，超出部分以省略号收尾，控制注入长度">
+                  节点截断
+                  <input type="number" id="ni-tb-future-node-clip" value="150" min="20" max="2000" step="10" style="width:60px">
+                  字
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="ni-field" style="margin-top:10px;margin-bottom:0">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <label style="display:flex;align-items:center;gap:5px">
+                <i class="ti ti-archive" style="font-size:12px"></i>剧情自动归档
+                <span style="font-size:10px;color:var(--color-text-secondary);font-weight:400">每条 AI 回复后自动判定并归档已演完节点</span>
+              </label>
+              <label class="ni-toggle-wrap">
+                <input type="checkbox" id="ni-tb-auto-archive">
+                <span class="ni-cfg-chk"><i class="ti ti-check"></i></span>
+              </label>
+            </div>
+            <div style="font-size:11px;color:var(--color-text-secondary);margin-top:6px;line-height:1.6">
+              ① 每条 AI 回复后，调用清洗模型比对最近剧情与待演节点，自动把已完整演绎的节点归档并推进到下一节点。<br>
+              ② 判定保守且严格按顺序归档，证据不足不会跳过节点；误归档可在节点面板点击取消。<br>
+              ③ 每次判定约消耗 1 次清洗模型请求；阶段内自动推进，演完整个阶段后是否自动进入下一阶段由下方开关控制。
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:8px;padding-left:14px">
+              <span style="font-size:11px;color:var(--color-text-secondary);line-height:1.5">演完整个阶段后，自动切换并进入下一阶段（关闭则停在阶段末，需手动切换阶段）</span>
+              <label class="ni-toggle-wrap" style="flex-shrink:0">
+                <input type="checkbox" id="ni-tb-auto-stage-advance" checked>
+                <span class="ni-cfg-chk"><i class="ti ti-check"></i></span>
+              </label>
             </div>
           </div>
         </div>

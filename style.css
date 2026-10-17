@@ -957,17 +957,32 @@
   pointer-events: none;
 }
 #ni-tb-cfg-panel .ni-cfg-chk {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   border-radius: 4px;
-  border: .5px solid var(--ni-primary-alpha-30, rgba(160, 68, 94, .3));
-  background: var(--color-background-primary);
+  /* 未选中态：清晰可见的白色描边 + 淡白底色，避免在深色背景上隐形 */
+  border: 1.5px solid rgba(255, 255, 255, .82);
+  background: rgba(255, 255, 255, .10);
+  box-shadow: 0 0 0 .5px rgba(0, 0, 0, .25);
   flex-shrink: 0;
   box-sizing: border-box;
   transition: all .15s;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+/* 悬停时更亮，强化可点击感 */
+#ni-tb-cfg-panel .ni-toggle-wrap:hover .ni-cfg-chk,
+#ni-tb-cfg-panel .ni-toggle-label:hover .ni-cfg-chk {
+  border-color: #ffffff;
+  background: rgba(255, 255, 255, .20);
+}
+/* 浅色主题下反转为深色描边，保证可见 */
+body.lightTheme #ni-tb-cfg-panel .ni-cfg-chk,
+.light-theme #ni-tb-cfg-panel .ni-cfg-chk {
+  border-color: rgba(30, 30, 35, .75);
+  background: rgba(30, 30, 35, .06);
+  box-shadow: none;
 }
 #ni-tb-cfg-panel .ni-cfg-chk i {
   font-size: 10px;
@@ -2789,16 +2804,16 @@ select.ni-modal-input {
 .ni-char-eye.on { color: var(--ni-primary, #A0445E); }
 .ni-char-eye:hover { background: var(--color-background-secondary); }
 
-/* AI人设粉色块 — 独立全宽行，在card-top之外*/
+/* AI实时人设 — 与原始人设同款：主题底色 + 主题文字（黑底白字/跟随主题），不再用粉色块 */
 .ni-char-ai-profile {
-  background: var(--ni-primary-soft-2, #FBF2F6); border-radius: 6px;
+  background: var(--color-background-primary);
+  border: .5px solid var(--ni-primary-border, #DDB5C0);
+  border-radius: 6px;
   margin-top: 6px; overflow: hidden;
   margin-left: 34px; margin-right: 0;
 }
 .ni-char-ai-profile-off {
-  background: var(--ni-primary-soft-2, #FBF2F6);
-  border: .5px solid var(--ni-primary-border, #DDB5C0);
-  opacity: .6;
+  background: var(--color-background-secondary);
 }
 .ni-char-ai-profile-hdr {
   display: flex; align-items: center; gap: 6px;
@@ -2820,13 +2835,12 @@ select.ni-modal-input {
   font-style: italic;
   opacity: .72;
 }
-.ni-char-ai-profile .ni-char-eye { color: var(--ni-primary, #A0445E); margin-right: 0; }
+.ni-char-ai-profile .ni-char-eye { margin-right: 0; }
 
-/* AI人设粉框内的四格 grid 复用 ni-af-grid，但背景/边框色调整*/
+/* AI人设四格 grid 复用 ni-af-grid，与原始人设一致：去外框、透明底（跟随块底色）*/
 .ni-char-ai-profile .ni-af-grid {
   border: none;
   border-radius: 0;
-  background: var(--ni-primary-soft-2, #FBF2F6);
 }
 .ni-char-ai-profile .ni-char-field:nth-child(1),
 .ni-char-ai-profile .ni-char-field:nth-child(2) { border-bottom: 1px dashed var(--ni-primary-border, #DDB5C0); }
@@ -2839,9 +2853,9 @@ select.ni-modal-input {
   font-size: 11px; font-weight: 600; color: var(--ni-primary, #A0445E);
   margin-bottom: 6px; padding-top: 4px;
 }
-/* AI人设编辑区粉色背景框*/
+/* AI人设编辑区背景框：与原始人设编辑区一致，跟随主题底色 */
 .ni-cef-ai-wrap {
-  background: var(--ni-primary-soft-2, #FBF2F6); border: .5px solid var(--ni-primary-border, #DDB5C0);
+  background: var(--color-background-secondary); border: .5px solid var(--ni-primary-border, #DDB5C0);
   border-radius: 6px; padding: 8px 10px; margin-top: 4px;
 }
 /* ── 加载旋转动画 ──*/

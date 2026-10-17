@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Novel Injector - 小说上下文注入插件
  * 功能：上传小说 → 分段清洗压缩 → 提取剧情/角色 → 向量化 → 按阶段开关动态注入酒馆上下文
 */
@@ -43,6 +43,7 @@ import { createAutosaveController } from './lib/autosave-system.js';
 
 import {
     NI_RAW_INJECTION_MAX_TOKENS_DEFAULT,
+    niBuildFuturePlotBlock,
     niBuildStageInjectionPayload,
     niIsVectorInjectionDisabledByUser,
     niNormalizeRawInjectionMaxTokens,
@@ -182,6 +183,7 @@ import {
     TAVERN_TASK_FINAL_OVERRIDE_PROMPT,
     TAVERN_TASK_SWITCH_PROMPT,
     TB_DEFAULT_ADVANCE_PROMPT,
+    TB_DEFAULT_AUTO_ARCHIVE_PROMPT,
     TB_DEFAULT_IMMERSION_PROMPT,
     TB_DEFAULT_INFER_PROMPT,
     TB_DEFAULT_ONGOING_PROMPT,
@@ -236,6 +238,17 @@ const DEFAULT_SETTINGS = {
     cleanUrl: 'https://api.openai.com/v1/chat/completions',
     cleanModel: 'gpt-4o',
     cleanStream: false,
+    apiDisableThinking: false, // 非思考模式：插件所有 API 请求附带 thinking:disabled，GLM/Kimi 等思考型模型跳过内心戏直接输出
+    cleanApi2Enabled: false,   // 清洗专用 API（双 API 并行：清洗走这套，游玩时功能走主配置）
+    cleanApi2Url: '',
+    cleanApi2Key: '',
+    cleanApi2Model: '',
+    cleanApi2RateLimit: 0,     // 清洗专用通道每分钟限速（0 = 沿用主设置 apiRateLimit）
+    cleanApi2Concurrency: 0,   // 清洗专用通道并发（0 = 沿用主设置 apiConcurrency）
+    devApiEnabled: false,      // 偏差分析专用 API（开启后偏差分析走这套独立凭据）
+    devApiUrl: '',
+    devApiKey: '',
+    devApiModel: '',
     vecKey: '',
     vecUrl: 'https://api.openai.com/v1',
     vecModel: 'text-embedding-3-large',
@@ -245,6 +258,7 @@ const DEFAULT_SETTINGS = {
     vecInjRole: 0,  // 0=system 1=user 2=assistant
     recallTopK: 3,
     recallThresh: 0.5,
+    recallHistoryTopK: 2,  // 前情召回片段数；0 = 不召回前情
     vecMsgTag: '',       // 消息内容标签，留空=完整消息，有值则只提取该标签内文字
     vecMsgCount: 3,      // 召回时取近几条消息
     // 角色人设注入设置
@@ -271,7 +285,8 @@ const DEFAULT_SETTINGS = {
     devInjDepth: 0,
     devInjRole: 0,
     devAutoUpdateEnabled: false,
-    devAutoUpdateEvery: 10,
+    devAutoUpdateEvery: 10,     // 自动更新间隔（层）
+    devAutoUpdateBatch: 10,     // 自动更新每次读取层数（可与间隔不同：如每 5 层触发一次吞 15 层）
     devManualMsgCount: 10,
     rawInjMode: "nodes",  // "nodes"=剧情节点 | "compressed"=压缩原文
     globalPromptSource: 'builtin', // builtin=内置提示词 tavern=酒馆预设 none=不使用
@@ -695,6 +710,15 @@ function niSaveSettings({ scheduleAutosave = true } = {}) {
     cfg.cleanUrl    = q('#ni-clean-url')?.value || cfg.cleanUrl;
     cfg.cleanModel  = q('#ni-clean-model')?.value || cfg.cleanModel;
     cfg.cleanStream = q('#ni-clean-stream')?.checked ?? cfg.cleanStream;
+    cfg.apiDisableThinking = q('#ni-no-think-enabled')?.checked ?? cfg.apiDisableThinking;
+    cfg.cleanApi2Enabled = q('#ni-clean-api2-enabled')?.checked ?? cfg.cleanApi2Enabled;
+    cfg.cleanApi2Url   = q('#ni-clean-api2-url')?.value ?? (cfg.cleanApi2Url || '');
+    cfg.cleanApi2Key   = q('#ni-clean-api2-key')?.value ?? (cfg.cleanApi2Key || '');
+    cfg.cleanApi2Model = q('#ni-clean-api2-model')?.value ?? (cfg.cleanApi2Model || '');
+    cfg.devApiEnabled = q('#ni-dev-api-enabled')?.checked ?? cfg.devApiEnabled;
+    cfg.devApiUrl   = q('#ni-dev-api-url')?.value ?? (cfg.devApiUrl || '');
+    cfg.devApiKey   = q('#ni-dev-api-key')?.value ?? (cfg.devApiKey || '');
+    cfg.devApiModel = q('#ni-dev-api-model')?.value ?? (cfg.devApiModel || '');
     cfg.cleanAutoResume = q('#ni-clean-auto-resume')?.checked ?? cfg.cleanAutoResume;
     cfg.vecKey      = q('#ni-vec-key')?.value || cfg.vecKey;
     cfg.vecUrl      = q('#ni-vec-url')?.value || cfg.vecUrl;
@@ -704,6 +728,7 @@ function niSaveSettings({ scheduleAutosave = true } = {}) {
     cfg.vecInjRole  = parseInt(q('#ni-vec-inj-role')?.value) ?? DEFAULT_SETTINGS.vecInjRole;
     cfg.recallTopK  = parseInt(q('#ni-recall-topk')?.value) || DEFAULT_SETTINGS.recallTopK;
     cfg.recallThresh= parseFloat(q('#ni-recall-thresh')?.value) ?? DEFAULT_SETTINGS.recallThresh;
+    cfg.recallHistoryTopK = niCfgBoundInt('#ni-recall-history-topk', DEFAULT_SETTINGS.recallHistoryTopK, 0, 20);
     cfg.vecMsgTag   = (q('#ni-vec-msg-tag')?.value || '').trim();
     cfg.vecMsgCount = parseInt(q('#ni-vec-msg-count')?.value) || DEFAULT_SETTINGS.vecMsgCount;
     cfg.charInjPos  = parseInt(q('#ni-char-inj-pos')?.value) ?? DEFAULT_SETTINGS.charInjPos;
@@ -734,6 +759,7 @@ function niSaveSettings({ scheduleAutosave = true } = {}) {
     cfg.devInjRole  = niCfgInt('#ni-dev-inj-role', DEFAULT_SETTINGS.devInjRole);
     cfg.devAutoUpdateEnabled = q('#ni-dev-auto-enabled')?.checked ?? (cfg.devAutoUpdateEnabled ?? DEFAULT_SETTINGS.devAutoUpdateEnabled);
     cfg.devAutoUpdateEvery = niCfgBoundInt('#ni-dev-auto-every', DEFAULT_SETTINGS.devAutoUpdateEvery, 1, 9999);
+    cfg.devAutoUpdateBatch = niCfgBoundInt('#ni-dev-auto-batch', DEFAULT_SETTINGS.devAutoUpdateBatch, 1, 200);
     cfg.devManualMsgCount = niCfgBoundInt('#ni-dev-manual-msg-count', DEFAULT_SETTINGS.devManualMsgCount, 1, 200);
     cfg.rawInjMode  = niNormalizeRawInjMode(q('#ni-raw-inj-mode')?.value ?? cfg.rawInjMode);
     cfg.chunkKb     = parseInt(q('#ni-chunk-kb')?.value) || DEFAULT_SETTINGS.chunkKb;
@@ -762,6 +788,8 @@ function niSaveSettings({ scheduleAutosave = true } = {}) {
     cfg.apiTimeoutMin = Math.max(1, parseInt(q('#ni-api-timeout')?.value) || DEFAULT_SETTINGS.apiTimeoutMin);
     cfg.apiRateLimit  = Math.max(0, parseInt(q('#ni-rate-limit')?.value) ?? DEFAULT_SETTINGS.apiRateLimit);
     cfg.apiConcurrency = niCfgBoundInt('#ni-api-concurrency', DEFAULT_SETTINGS.apiConcurrency, 0, 99);
+    cfg.cleanApi2RateLimit = Math.max(0, parseInt(q('#ni-clean-api2-rate')?.value) || 0);
+    cfg.cleanApi2Concurrency = niCfgBoundInt('#ni-clean-api2-concurrency', cfg.cleanApi2Concurrency ?? 0, 0, 99);
     cfg.vecRateLimit  = Math.max(0, parseInt(q('#ni-vec-rate-limit')?.value) ?? DEFAULT_SETTINGS.vecRateLimit);
     cfg.vecConcurrency = niCfgBoundInt('#ni-vec-concurrency', DEFAULT_SETTINGS.vecConcurrency, 0, 99);
     cfg.vecBatchSize = niCfgBoundInt('#ni-vec-batch-size', DEFAULT_SETTINGS.vecBatchSize, 1, 100);
@@ -964,6 +992,26 @@ function syncSettingsToUI() {
         const pill = q('#ni-stream-pill');
         if (pill) pill.textContent = streamEl.checked ? '开' : '关';
     }
+    const noThinkEl = q('#ni-no-think-enabled');
+    if (noThinkEl) {
+        noThinkEl.checked = !!(cfg.apiDisableThinking ?? DEFAULT_SETTINGS.apiDisableThinking);
+        const noThinkPill = q('#ni-no-think-pill');
+        if (noThinkPill) noThinkPill.textContent = noThinkEl.checked ? '开' : '关';
+    }
+    const cleanApi2El = q('#ni-clean-api2-enabled');
+    if (cleanApi2El) cleanApi2El.checked = !!(cfg.cleanApi2Enabled ?? DEFAULT_SETTINGS.cleanApi2Enabled);
+    sv('#ni-clean-api2-url', cfg.cleanApi2Url || '');
+    sv('#ni-clean-api2-key', cfg.cleanApi2Key || '');
+    sv('#ni-clean-api2-model', cfg.cleanApi2Model || '');
+    sv('#ni-clean-api2-rate', cfg.cleanApi2RateLimit ?? 0);
+    sv('#ni-clean-api2-concurrency', cfg.cleanApi2Concurrency ?? 0);
+    niSyncCleanApi2UI();
+    sv('#ni-dev-api-url', cfg.devApiUrl || '');
+    sv('#ni-dev-api-key', cfg.devApiKey || '');
+    sv('#ni-dev-api-model', cfg.devApiModel || '');
+    const devApiEl = q('#ni-dev-api-enabled');
+    if (devApiEl) devApiEl.checked = !!(cfg.devApiEnabled ?? DEFAULT_SETTINGS.devApiEnabled);
+    niSyncDevApiUI();
     const autoResumeEl = q('#ni-clean-auto-resume');
     if (autoResumeEl) {
         autoResumeEl.checked = !!(cfg.cleanAutoResume ?? DEFAULT_SETTINGS.cleanAutoResume);
@@ -978,6 +1026,7 @@ function syncSettingsToUI() {
     sv('#ni-vec-inj-role', cfg.vecInjRole  ?? DEFAULT_SETTINGS.vecInjRole);
     sv('#ni-recall-topk',  cfg.recallTopK  ?? DEFAULT_SETTINGS.recallTopK);
     sv('#ni-recall-thresh',cfg.recallThresh?? DEFAULT_SETTINGS.recallThresh);
+    sv('#ni-recall-history-topk', cfg.recallHistoryTopK ?? DEFAULT_SETTINGS.recallHistoryTopK);
     sv('#ni-vec-msg-tag',  cfg.vecMsgTag   ?? DEFAULT_SETTINGS.vecMsgTag);
     sv('#ni-vec-msg-count', cfg.vecMsgCount ?? DEFAULT_SETTINGS.vecMsgCount);
     sv('#ni-char-inj-pos', cfg.charInjPos  ?? DEFAULT_SETTINGS.charInjPos);
@@ -996,6 +1045,7 @@ function syncSettingsToUI() {
     sv('#ni-dev-inj-depth',cfg.devInjDepth?? DEFAULT_SETTINGS.devInjDepth);
     sv('#ni-dev-inj-role',cfg.devInjRole ?? DEFAULT_SETTINGS.devInjRole);
     sv('#ni-dev-auto-every', niBoundIntValue(cfg.devAutoUpdateEvery, DEFAULT_SETTINGS.devAutoUpdateEvery, 1, 9999));
+    sv('#ni-dev-auto-batch', niBoundIntValue(cfg.devAutoUpdateBatch ?? cfg.devAutoUpdateEvery, DEFAULT_SETTINGS.devAutoUpdateBatch, 1, 200));
     sv('#ni-dev-manual-msg-count', cfg.devManualMsgCount ?? DEFAULT_SETTINGS.devManualMsgCount);
     const devAutoEl = q('#ni-dev-auto-enabled');
     if (devAutoEl) devAutoEl.checked = !!(cfg.devAutoUpdateEnabled ?? DEFAULT_SETTINGS.devAutoUpdateEnabled);
@@ -1179,6 +1229,24 @@ function niBindTopbarIconToggleHandlers() {
         });
 }
 
+function niSyncCleanApi2UI() {
+    const cb = q('#ni-clean-api2-enabled');
+    const pill = q('#ni-clean-api2-pill');
+    const box = q('#ni-clean-api2-box');
+    const enabled = !!cb?.checked;
+    if (pill) pill.textContent = enabled ? '开' : '关';
+    if (box) box.style.display = enabled ? 'block' : 'none';
+}
+
+function niSyncDevApiUI() {
+    const cb = q('#ni-dev-api-enabled');
+    const pill = q('#ni-dev-api-pill');
+    const box = q('#ni-dev-api-box');
+    const enabled = !!cb?.checked;
+    if (pill) pill.textContent = enabled ? '开' : '关';
+    if (box) box.style.display = enabled ? 'block' : 'none';
+}
+
 function niSyncDevAutoUI({ syncNote = false } = {}) {
     const input = q('#ni-dev-auto-every');
     const row = input?.closest('.ni-dev-auto-row');
@@ -1319,6 +1387,16 @@ const VecSemaphore = new DynamicSemaphore(() =>
     concurrencyLimit(extension_settings[EXT_NAME]?.vecConcurrency, DEFAULT_SETTINGS.vecConcurrency)
 );
 
+// 清洗专用通道的信号量：与主通道互相独立，双 API 并行时清洗不占用主通道并发位。
+// 未单独设置（0/无效）时沿用主并发。
+const CleanApiSemaphore = new DynamicSemaphore(() => {
+    const cfg = extension_settings[EXT_NAME] || {};
+    // 清洗专用开关关掉时，专用并发数字一并失效（否则关了开关还被 1 并发卡着）
+    const own = cfg.cleanApi2Enabled === true ? parseInt(cfg.cleanApi2Concurrency, 10) : 0;
+    if (Number.isFinite(own) && own > 0) return own;
+    return concurrencyLimit(cfg.apiConcurrency, DEFAULT_SETTINGS.apiConcurrency);
+});
+
 function niUseTavernGlobalPreset(cfg = extension_settings[EXT_NAME] || {}) {
     return niNormalizeGlobalPromptSource(cfg.globalPromptSource) === 'tavern';
 }
@@ -1390,9 +1468,11 @@ const {
 } = createNovelApiClient({
     getSettings: () => extension_settings[EXT_NAME],
     acquireApiRateSlot: niAcquireApiRateSlot,
+    acquireCleanApiRateSlot: niAcquireCleanApiRateSlot,
     useTavernGlobalPreset: niUseTavernGlobalPreset,
     runWithSemaphore,
     apiSemaphore: ApiSemaphore,
+    cleanApiSemaphore: CleanApiSemaphore,
     buildTavernPresetMessages: niBuildTavernPresetMessages,
     applyGlobalPromptsToMessages: niApplyGlobalPromptsToMessages,
     readChatCompletionStream: niReadChatCompletionStream,
@@ -1766,6 +1846,8 @@ const {
     niSetNovelLibraryPage,
     niChangeNovelLibraryPage,
     niSaveNovelSnapshot,
+    niMaybeAutoProtectWorkspace,
+    niWriteBackCleanSnapshot,
     niUpdateNovelSnapshot,
     niRenameNovelSnapshot,
     niLoadNovelSnapshot,
@@ -1822,6 +1904,12 @@ const {
     confirm,
     prompt,
     toastr: globalThis.toastr,
+    // 清洗控制器在此之后才初始化，用箭头延迟到调用时再解析（用户操作时才触发）
+    detachCleanForSwitch: (...args) => niDetachCleanForSwitch(...args),
+    setCleanSessionHome: (...args) => niSetCleanSessionHome(...args),
+    isCleanDetached: () => niIsCleanDetached(),
+    getCleanSessionInfo: () => niGetCleanSessionInfo(),
+    forceCleanSessionHome: (...args) => niForceCleanSessionHome(...args),
 });
 
 niAutosave = createAutosaveController({
@@ -1852,6 +1940,11 @@ const {
     niSkipChunk,
     niRunSingleChunk,
     niPauseClean,
+    niDetachCleanForSwitch,
+    niSetCleanSessionHome,
+    niIsCleanDetached,
+    niGetCleanSessionInfo,
+    niForceCleanSessionHome,
     setBtn,
     niSyncCleanProgressHint,
     niSyncCleanButtonState,
@@ -1872,9 +1965,19 @@ const {
         + '<p>如果只是补齐失败或未完成的分段，请取消后点击“续跑清洗”。</p>',
         { okButton: '确认重新清洗', cancelButton: '取消', defaultResult: POPUP_RESULT.NEGATIVE },
     )) === POPUP_RESULT.AFFIRMATIVE,
+    // 已完成段压缩正文缺失时的降级续跑确认
+    confirm: async ({ done = 0 } = {}) => (await Popup.show.confirm(
+        '压缩正文缺失，如何继续？',
+        `<p>已完成 ${done} 段的压缩正文无法从服务端加载（快照数据不完整）。</p>`
+        + '<p><b>降级续跑</b>：保留"已完成"标记，缺失处自动改用前段原文末尾做衔接参考，后续分段照常压缩，已完成的段不会重洗。</p>'
+        + '<p><b>取消</b>：停止清洗，可左键「重新清洗」全部重来。</p>',
+        { okButton: '降级续跑', cancelButton: '取消', defaultResult: POPUP_RESULT.NEGATIVE },
+    )) === POPUP_RESULT.AFFIRMATIVE,
     toastr: globalThis.toastr,
     fingerprintArrayBuffer: niFingerprintArrayBuffer,
     resetNovelWorkspace: niResetNovelWorkspace,
+    maybeAutoProtectWorkspace: (...args) => niMaybeAutoProtectWorkspace(...args),
+    writeBackCleanSnapshot: (...args) => niWriteBackCleanSnapshot(...args),
     serverLoadHeavy: niServerLoadHeavy,
     rechunkPreservingCompleted: niRechunkPreservingCompleted,
     remapVectorSourceChunkIndices: dbRemapSourceChunkIndices,
@@ -1983,6 +2086,9 @@ const {
     niTbWriteAdvancePrompt,
     niTbWriteOpeningPrompt,
     niTbGenerateInfer,
+    niTbAutoArchive,
+    niTbResetProgress,
+    niTbAutoResetIfEmpty,
     niTbInjectCSS,
     niTbRenderStoryBar,
     niRefreshStorybarTheme,
@@ -1992,6 +2098,7 @@ const {
     niTbToggleDropPanel,
     niTbRebuildStageList,
     niTbInitSettingsUI,
+    niTbSyncFutureInjectBox,
     niTbPeekPendingAdvancePrompt,
     niTbConsumePendingAdvancePrompt,
     niTbResetPromptRuntimeState,
@@ -2030,6 +2137,7 @@ const {
     requestAnimationFrame: (...args) => requestAnimationFrame(...args),
     Event,
     defaultAdvancePrompt: TB_DEFAULT_ADVANCE_PROMPT,
+    defaultAutoArchivePrompt: TB_DEFAULT_AUTO_ARCHIVE_PROMPT,
     defaultInferPrompt: TB_DEFAULT_INFER_PROMPT,
     defaultOpeningPrompt: TB_DEFAULT_OPENING_PROMPT,
     defaultOngoingPrompt: TB_DEFAULT_ONGOING_PROMPT,
@@ -2037,6 +2145,18 @@ const {
     legacyAdvancePrompt: TB_LEGACY_ADVANCE_PROMPT,
     legacyOpeningPrompt: TB_LEGACY_OPENING_PROMPT,
     legacyOngoingPrompt: TB_LEGACY_ONGOING_PROMPT,
+    // 归档判定用的分支现实摘要（summary + 当前偏差约束），帮助判官识别"等价达成"
+    getDeviationContext: () => {
+        try {
+            niLoadDeviationStateFromChat({ allowLegacyMigration: false, collapsed: true, syncUI: false });
+            const sections = niGetDeviationSections() || {};
+            const summary = String(sections.summary || '').trim();
+            const constraint = String(sections.current_deviation_constraint || '').trim();
+            if (!summary && !constraint) return '';
+            const clip = (t, n) => (t.length > n ? t.slice(0, n) + '…' : t);
+            return `总体偏差：${clip(summary || '（无）', 150)}\n当前分支现实约束：${clip(constraint || '（无）', 600)}`;
+        } catch (_) { return ''; }
+    },
 });
 // 合并角色数据
 // ============================================================
@@ -2069,14 +2189,15 @@ async function dbRemapSourceChunkIndices(indexMap) {
     });
 }
 
-function mergePlots(incoming, chunkIndex) {
+// state 可传清洗会话等外部状态对象（后台清洗 detach 后传入会话，默认为工作区 S）
+function mergePlots(state, incoming, chunkIndex) {
     // stageMap key = main数组下标，不能用 chunkIndex 直接查。
     // 这里只记录 _chunkIdx，stageIdx 由 niConfirmStageMap 事后统一回填。
     // 若阶段已划分且当前节点是续跑补充的，通过已有节点的 _chunkIdx 反查阶段号。
     let stageIdx = null;
-    if (S.stageMapN > 0) {
+    if (state.stageMapN > 0) {
         // 在已有节点中找同 chunkIndex 的节点，借用其 stageIdx
-        const ref = [...(S.plots.main || []), ...(S.plots.sub || []), ...(S.plots.pivot || [])]
+        const ref = [...(state.plots.main || []), ...(state.plots.sub || []), ...(state.plots.pivot || [])]
             .find(p => p._chunkIdx === chunkIndex && p.stageIdx != null);
         if (ref) {
             stageIdx = ref.stageIdx;
@@ -2112,7 +2233,7 @@ function mergePlots(incoming, chunkIndex) {
         const manualOrder = niPlotManualOrder(p);
         if (manualOrder != null) newPlot._manualOrder = manualOrder;
         niEnsurePlotNodeId(newPlot, bucket, localIndex);
-        S.plots[bucket].push({
+        state.plots[bucket].push({
             ...newPlot,
         });
     });
@@ -3021,13 +3142,26 @@ const _vecQueue = new PersistedRateQueue({
     getLimit: () => extension_settings[EXT_NAME]?.vecRateLimit,
 });
 
+// 清洗专用 API 的限速队列：与主通道互相独立，双 API 并行时互不排队。
+// 未单独设置（0/无效）时沿用主限速；队列内 0 表示不限速，所以这里必须解析出有效值再返回。
+const _cleanApiQueue = new PersistedRateQueue({
+    storageKey: `${EXT_NAME}:clean-api2-last-request-at`,
+    getLimit: () => {
+        const cfg = extension_settings[EXT_NAME] || {};
+        // 清洗专用开关关掉时，专用限速数字一并失效（否则关了开关还被 1 次/分钟卡着）
+        const own = cfg.cleanApi2Enabled === true ? parseInt(cfg.cleanApi2RateLimit, 10) : 0;
+        if (Number.isFinite(own) && own > 0) return own;
+        return cfg.apiRateLimit;
+    },
+});
+
 // ============================================================
 // 自动生成阶段标题和概括
 // ============================================================
 // 角色/阶段概括与清洗共用每分钟限速；实际并发由 apiConcurrency 和 ApiSemaphore 共同限制
-async function niAcquireApiRateSlot(signal = null) {
+async function _niAcquireRateSlot(queue, signal = null) {
     if (!signal) {
-        await _apiQueue.acquire();
+        await queue.acquire();
         return;
     }
     if (signal.aborted) throw new Error('请求已中止（超时或用户操作）');
@@ -3037,11 +3171,18 @@ async function niAcquireApiRateSlot(signal = null) {
         signal.addEventListener('abort', onAbort, { once: true });
     });
     try {
-        await Promise.race([_apiQueue.acquire(), abortPromise]);
+        await Promise.race([queue.acquire(), abortPromise]);
     } finally {
         if (onAbort) signal.removeEventListener('abort', onAbort);
     }
     if (signal.aborted) throw new Error('请求已中止（超时或用户操作）');
+}
+async function niAcquireApiRateSlot(signal = null) {
+    return _niAcquireRateSlot(_apiQueue, signal);
+}
+// 清洗专用通道的限速槽：与主通道队列独立，双 API 并行时互不排队
+async function niAcquireCleanApiRateSlot(signal = null) {
+    return _niAcquireRateSlot(_cleanApiQueue, signal);
 }
 
 // 手动触发：角色概括
@@ -3349,7 +3490,7 @@ async function onPromptReady(eventData) {
                     lightRecallContext,
                     nodeRecallContext,
                     historicalStages: vectorRecallScope.historicalStages,
-                    historyTopK: 2,
+                    historyTopK: cfg.recallHistoryTopK ?? DEFAULT_SETTINGS.recallHistoryTopK,
                     splitSections: true,
                     keywordTerms,
                     // 非穿书模式没有当前节点可锚定，让召回自己从得分分布反推当前阶段。
@@ -3469,10 +3610,10 @@ async function onPromptReady(eventData) {
 
 // 拉取模型列表
 // ============================================================
-async function fetchModels(urlInputId, keyInputId, selectId, textInputId) {
+async function fetchModels(urlInputId, keyInputId, selectId, textInputId, btnId = null) {
     const url = q(`#${urlInputId}`)?.value?.trim();
     const key = q(`#${keyInputId}`)?.value?.trim();
-    const btn = q(`#${textInputId === 'ni-clean-model' ? 'ni-clean-fetch-models' : 'ni-vec-fetch-models'}`);
+    const btn = q(`#${btnId || (textInputId === 'ni-clean-model' ? 'ni-clean-fetch-models' : 'ni-vec-fetch-models')}`);
     await niLoadModelList({
         url,
         key,
@@ -3492,6 +3633,8 @@ async function fetchModels(urlInputId, keyInputId, selectId, textInputId) {
                 onSelected: value => {
                     const cfg = extension_settings[EXT_NAME];
                     if (textInputId === 'ni-clean-model') cfg.cleanModel = value;
+                    else if (textInputId === 'ni-clean-api2-model') cfg.cleanApi2Model = value;
+                    else if (textInputId === 'ni-dev-api-model') cfg.devApiModel = value;
                     else if (textInputId === 'ni-vec-model') {
                         cfg.vecModel = value;
                         niRefreshCurrentVectorSourceHint().catch(e => console.warn('[NI] 刷新向量来源提示失败:', e));
@@ -3752,6 +3895,7 @@ jQuery(async () => {
     $app.on('input', '#ni-api-concurrency', () => niSaveSettings());
     $app.on('input', '#ni-vec-rate-limit', () => niSaveSettings());
     $app.on('input', '#ni-vec-concurrency', () => niSaveSettings());
+    $app.on('input', '#ni-clean-api2-rate, #ni-clean-api2-concurrency', () => niSaveSettings());
     $app.on('change', '#ni-vec-batch-size', () => niSaveSettings());
 
     // 流式开关
@@ -3780,6 +3924,30 @@ jQuery(async () => {
         if (!cb) return;
         cb.checked = !cb.checked;
         if (pill) pill.textContent = cb.checked ? '开' : '关';
+        niSaveSettings();
+    });
+    // 非思考模式开关：GLM/Kimi 等思考型模型直连时跳过内心戏
+    $app.on('click', '#ni-no-think-btn', function() {
+        const cb = q('#ni-no-think-enabled');
+        const pill = q('#ni-no-think-pill');
+        if (!cb) return;
+        cb.checked = !cb.checked;
+        if (pill) pill.textContent = cb.checked ? '开' : '关';
+        niSaveSettings();
+    });
+    $app.on('click', '#ni-clean-api2-toggle', function() {
+        const cb = q('#ni-clean-api2-enabled');
+        if (!cb) return;
+        cb.checked = !cb.checked;
+        niSyncCleanApi2UI();
+        niSaveSettings();
+        niCleanRequestView.invalidatePreview();
+    });
+    $app.on('click', '#ni-dev-api-toggle', function() {
+        const cb = q('#ni-dev-api-enabled');
+        if (!cb) return;
+        cb.checked = !cb.checked;
+        niSyncDevApiUI();
         niSaveSettings();
     });
 
@@ -3832,11 +4000,15 @@ jQuery(async () => {
     });
 
     // 清洗 API 输入框
-    $app.on('input', '#ni-clean-key, #ni-clean-url, #ni-clean-model', () => niSaveSettings());
+    $app.on('input', '#ni-clean-key, #ni-clean-url, #ni-clean-model, #ni-clean-api2-url, #ni-clean-api2-key, #ni-clean-api2-model', () => niSaveSettings());
     $app.on('click', '#ni-clean-fetch-models', () =>
         fetchModels('ni-clean-url', 'ni-clean-key', 'ni-clean-model-select', 'ni-clean-model'));
     $app.on('click', '#ni-vec-fetch-models', () =>
         fetchModels('ni-vec-url', 'ni-vec-key', 'ni-vec-model-select', 'ni-vec-model'));
+    $app.on('click', '#ni-clean-api2-fetch-models', () =>
+        fetchModels('ni-clean-api2-url', 'ni-clean-api2-key', 'ni-clean-api2-model-select', 'ni-clean-api2-model', 'ni-clean-api2-fetch-models'));
+    $app.on('click', '#ni-dev-api-fetch-models', () =>
+        fetchModels('ni-dev-api-url', 'ni-dev-api-key', 'ni-dev-api-model-select', 'ni-dev-api-model', 'ni-dev-api-fetch-models'));
 
     // 向量化按钮
     $app.on('click', '#ni-vec-cfg-btn', () => niTogglePanel('ni-vec-api', 'ni-vec-cfg-btn'));
@@ -3950,7 +4122,7 @@ jQuery(async () => {
         const body = document.getElementById('ni-inj-body');
         if (body) body.style.display = body.style.display === 'none' ? '' : 'none';
     });
-    $app.on('input change', '#ni-inj-depth, #ni-recall-topk, #ni-recall-thresh, #ni-vec-msg-tag, #ni-vec-msg-count, #ni-vec-inj-pos, #ni-vec-inj-role, #ni-char-inj-pos, #ni-char-inj-depth, #ni-char-inj-role, #ni-plot-inj-pos, #ni-plot-inj-depth, #ni-plot-inj-role, #ni-plot-inj-max-tokens, #ni-dev-inj-pos, #ni-dev-inj-depth, #ni-dev-inj-role, #ni-global-head-inj-pos, #ni-global-head-inj-depth, #ni-global-head-inj-role, #ni-global-tail-inj-pos, #ni-global-tail-inj-depth, #ni-global-tail-inj-role', () => niSaveSettings());
+    $app.on('input change', '#ni-inj-depth, #ni-recall-topk, #ni-recall-thresh, #ni-recall-history-topk, #ni-vec-msg-tag, #ni-vec-msg-count, #ni-vec-inj-pos, #ni-vec-inj-role, #ni-char-inj-pos, #ni-char-inj-depth, #ni-char-inj-role, #ni-plot-inj-pos, #ni-plot-inj-depth, #ni-plot-inj-role, #ni-plot-inj-max-tokens, #ni-dev-inj-pos, #ni-dev-inj-depth, #ni-dev-inj-role, #ni-global-head-inj-pos, #ni-global-head-inj-depth, #ni-global-head-inj-role, #ni-global-tail-inj-pos, #ni-global-tail-inj-depth, #ni-global-tail-inj-role', () => niSaveSettings());
     $app.on('input change', '#ni-plot-inj-max-tokens', () => niUpdateStageInjectionBudgetNote());
     $app.on('input change', '#ni-raw-inj-mode', async function() {
         const cfg = extension_settings[EXT_NAME] || {};
@@ -4189,7 +4361,7 @@ jQuery(async () => {
             return { ok: false, error: e };
         });
     });
-    $app.on('input change', '#ni-dev-auto-every, #ni-dev-manual-msg-count', () => {
+    $app.on('input change', '#ni-dev-auto-every, #ni-dev-auto-batch, #ni-dev-manual-msg-count', () => {
         niSyncDevAutoUI();
         niSaveSettings();
         niResetDevAutoCounter();
@@ -4961,8 +5133,15 @@ window.niSaveSettings = function () {
     cfg.tbDisplayStatusbar = document.getElementById('ni-tb-display-statusbar')?.checked ?? cfg.tbDisplayStatusbar;
     cfg.tbDisplayPopup     = document.getElementById('ni-tb-display-popup')?.checked     ?? cfg.tbDisplayPopup;
     cfg.tbLightRecallMode  = document.getElementById('ni-tb-light-recall-mode')?.checked ?? cfg.tbLightRecallMode;
+    cfg.tbAutoArchive      = document.getElementById('ni-tb-auto-archive')?.checked ?? cfg.tbAutoArchive;
+    cfg.tbAutoStageAdvance = document.getElementById('ni-tb-auto-stage-advance')?.checked ?? cfg.tbAutoStageAdvance;
     cfg.tbImmersionMode    = document.getElementById('ni-tb-immersion-mode')?.checked ?? cfg.tbImmersionMode;
     cfg.tbImmersionPrompt  = document.getElementById('ni-tb-immersion-prompt')?.value || cfg.tbImmersionPrompt || TB_DEFAULT_IMMERSION_PROMPT;
+    // 未来剧情提前注入
+    cfg.tbFutureInjectEnabled = document.getElementById('ni-tb-future-inject')?.checked ?? cfg.tbFutureInjectEnabled;
+    cfg.tbFutureNodeCount  = niCfgBoundInt('#ni-tb-future-node-count', DEFAULT_SETTINGS.tbFutureNodeCount, 0, 10);
+    cfg.tbFutureStageCount = niCfgBoundInt('#ni-tb-future-stage-count', DEFAULT_SETTINGS.tbFutureStageCount, 0, 5);
+    cfg.tbFutureNodeClip   = niCfgBoundInt('#ni-tb-future-node-clip', DEFAULT_SETTINGS.tbFutureNodeClip, 20, 2000);
 };
 
 // syncSettingsToUI 补丁：切换到设置页时将穿书字段同步到 UI
@@ -4986,8 +5165,22 @@ const _niSyncSettingsToUIPatched = function () {
     if (lightRecallModeChkSync) lightRecallModeChkSync.checked = !!cfg.tbLightRecallMode;
     const immersionModeChkSync = document.getElementById('ni-tb-immersion-mode');
     if (immersionModeChkSync) immersionModeChkSync.checked = !!cfg.tbImmersionMode;
+    const autoArchiveChkSync = document.getElementById('ni-tb-auto-archive');
+    if (autoArchiveChkSync) autoArchiveChkSync.checked = !!cfg.tbAutoArchive;
+    const stageAdvanceChkSync = document.getElementById('ni-tb-auto-stage-advance');
+    if (stageAdvanceChkSync) stageAdvanceChkSync.checked = cfg.tbAutoStageAdvance !== false;
     const immersionPromptEl = document.getElementById('ni-tb-immersion-prompt');
     if (immersionPromptEl) immersionPromptEl.value = cfg.tbImmersionPrompt || TB_DEFAULT_IMMERSION_PROMPT;
+    // 未来剧情提前注入
+    const futureInjectChk = document.getElementById('ni-tb-future-inject');
+    if (futureInjectChk) futureInjectChk.checked = cfg.tbFutureInjectEnabled !== false;
+    const futureNodeCountEl = document.getElementById('ni-tb-future-node-count');
+    if (futureNodeCountEl) futureNodeCountEl.value = niBoundIntValue(cfg.tbFutureNodeCount, DEFAULT_SETTINGS.tbFutureNodeCount, 0, 10);
+    const futureStageCountEl = document.getElementById('ni-tb-future-stage-count');
+    if (futureStageCountEl) futureStageCountEl.value = niBoundIntValue(cfg.tbFutureStageCount, DEFAULT_SETTINGS.tbFutureStageCount, 0, 5);
+    const futureNodeClipEl = document.getElementById('ni-tb-future-node-clip');
+    if (futureNodeClipEl) futureNodeClipEl.value = niBoundIntValue(cfg.tbFutureNodeClip, DEFAULT_SETTINGS.tbFutureNodeClip, 20, 2000);
+    if (typeof niTbSyncFutureInjectBox === 'function') niTbSyncFutureInjectBox();
     if (typeof niSyncGlobalPromptSourceUI === 'function') niSyncGlobalPromptSourceUI(cfg);
 };
 window.syncSettingsToUI = _niSyncSettingsToUIPatched;
@@ -5064,9 +5257,27 @@ jQuery(document).ready(function () {
             if (!curNode) return;
 
             const ongoingTpl = (cfg.tbOngoingPrompt || TB_DEFAULT_ONGOING_PROMPT).trim();
+            // 未来剧情提前注入：原著占比修复的升级版。穿书模式默认只注入当前节点，
+            // 后续待演节点完全不出现，20 条聊天下来原著信息只剩零头。现在把「后续 N 个
+            // 节点 + 后续 M 个阶段走向」做成可配置块，追加在持续提示词之后；数量与截断
+            // 在 剧情页 → 穿书模式 → 穿书设置（齿轮）里调，0 表示该部分不注入。
+            const futureBlock = niBuildFuturePlotBlock({
+                nodes,
+                curNode,
+                stageTitles: S.stageTitles,
+                stageSummaries: S.stageSummaries,
+                stageStates: S.stageStates,
+                totalStages: S.stageMapN,
+                enabled: cfg.tbFutureInjectEnabled !== false,
+                nodeCount: cfg.tbFutureNodeCount ?? DEFAULT_SETTINGS.tbFutureNodeCount,
+                stageCount: cfg.tbFutureStageCount ?? DEFAULT_SETTINGS.tbFutureStageCount,
+                nodeClip: cfg.tbFutureNodeClip ?? DEFAULT_SETTINGS.tbFutureNodeClip,
+            });
             const ongoingContent = ongoingTpl
                 .replace(/{B_TITLE}/g, curNode.title)
-                .replace(/{B_BODY}/g,  curNode.body || '（暂无描述）') + immersionAppend;
+                .replace(/{B_BODY}/g,  curNode.body || '（暂无描述）')
+                + (futureBlock ? `\n\n${futureBlock}` : '')
+                + immersionAppend;
             _inject(`${EXT_NAME}_tb_ongoing`, ongoingContent);
         });
         eventSource.makeLast?.(event_types.CHAT_COMPLETION_PROMPT_READY, niFinalUserSubPromptRewrite);
@@ -5089,7 +5300,43 @@ jQuery(document).ready(function () {
 
     // 真正生成新消息时解钉预览节点：之后的重挂载才允许自动回正到当前节点
     eventSource.on(event_types.MESSAGE_RECEIVED, () => niTbUnpinView());
+    // 穿书自动归档：AI 回复完成后延迟判定，避免与消息渲染/存档竞争
+    let _niTbAutoArchiveTimer = null;
+    // 判定进行中导致本次跳过时，等待后补判，避免该条回复被漏判；
+    // 补判只绕过冷却/退避（bypassCooldown），开关/暂停/并发锁仍然生效
+    const niTbRunAutoArchive = async () => {
+        for (let attempt = 0; attempt < 4; attempt++) {
+            const res = await niTbAutoArchive?.(attempt > 0 ? { bypassCooldown: true } : {})
+                .catch(e => { console.warn('[NI-TB] 自动归档调度失败:', e); return null; });
+            if (!res || res.reason !== 'running') return;
+            await new Promise(r => setTimeout(r, 3000));
+        }
+    };
+    const niTbScheduleAutoArchive = () => {
+        const cfg = extension_settings[EXT_NAME] || {};
+        if (!cfg.transBookMode || !cfg.tbAutoArchive) return;
+        clearTimeout(_niTbAutoArchiveTimer);
+        console.info('[NI-TB] 自动归档：检测到新回复，2 秒后开始判定');
+        _niTbAutoArchiveTimer = setTimeout(() => { niTbRunAutoArchive(); }, 2000);
+    };
+    // 同时挂在 RECEIVED 与 RENDERED：后者保证消息已写入存档，重复触发由防抖+并发锁收敛
+    eventSource.on(event_types.MESSAGE_RECEIVED, niTbScheduleAutoArchive);
+    if (event_types.CHARACTER_MESSAGE_RENDERED) {
+        eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, niTbScheduleAutoArchive);
+    }
     eventSource.on(event_types.MESSAGE_SENT,     () => niTbUnpinView());
+
+    // 删除消息后：若角色扮演正文被清空且存在归档进度，自动回档到第 1 个节点
+    let _niTbAutoResetTimer = null;
+    if (event_types.MESSAGE_DELETED) {
+        eventSource.on(event_types.MESSAGE_DELETED, () => {
+            if (!extension_settings[EXT_NAME]?.transBookMode) return;
+            clearTimeout(_niTbAutoResetTimer);
+            _niTbAutoResetTimer = setTimeout(() => {
+                niTbAutoResetIfEmpty?.().catch(e => console.warn('[NI-TB] 清空自动回档失败:', e));
+            }, 800);
+        });
+    }
 
     // 切换对话：重置状态，重新加载
     eventSource.on(event_types.CHAT_CHANGED, () => {
