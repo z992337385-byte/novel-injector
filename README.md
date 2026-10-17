@@ -2,6 +2,8 @@
 
 SillyTavern（酒馆）第三方扩展。先把小说清洗成压缩正文、剧情节点和角色资料，再在聊天时注入相关内容；支持向量检索、穿书进度、用户代入、世界设定与文风。
 
+> **维护说明**：本仓库是 [ZZZa-o/novel-injector](https://github.com/ZZZa-o/novel-injector) 的续维护版本（原作者已停止更新）。安装请使用本仓库地址；原始项目及其历史版权归原作者所有。
+
 > **已经支持自定义上下文注入位置。** 打开插件 → **处理** → 向下找到并展开 **注入设置** → 展开要调整的分类，即可设置 **注入位置、注入深度、消息角色**。各类内容可以分别设置，详见下文。
 
 [安装与上手](#安装与上手) · [注入说明](#注入位置与内容) · [穿书与代入](#穿书与用户代入) · [常见问题](#常见问题) · [更新记录](./更新记录.md)
@@ -11,7 +13,7 @@ SillyTavern（酒馆）第三方扩展。先把小说清洗成压缩正文、剧
 在酒馆的扩展安装入口粘贴：
 
 ```text
-https://github.com/ZZZa-o/novel-injector
+https://github.com/z992337385-byte/novel-injector
 ```
 
 安装后刷新页面，点击顶部的书本图标打开插件。手动安装则把仓库放到 `SillyTavern/public/scripts/extensions/third-party/novel-injector`，目录内须包含 `manifest.json`、`index.js`、`lib/` 等文件。
