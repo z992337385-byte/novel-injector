@@ -937,6 +937,20 @@ function niBuildStageInjectionBudgetPreview() {
     return niBuildStageInjectionPayloadForPlan(plan, cfg);
 }
 
+// 阶段注入预算预览的签名：预算结果依赖启停阶段、向量完成情况、直注模式、Token 上限、
+// 穿书进度与正文/节点内容。niUpdateVecOffBtn 等高频路径会反复调用预算提示，命中签名
+// 时直接复用上次结果，避免每次都把全部直注阶段正文拼成完整字符串（大小说下明显卡顿）。
+function niStageInjectionBudgetSignature() {
+    const cfg = extension_settings[EXT_NAME] || {};
+    return [
+        cfg.rawInjMode, cfg.plotInjMaxTokens, cfg.transBookMode ? 1 : 0,
+        S.stageMapN, S.tbCurIdx, S.tbFrontierStageIdx,
+        JSON.stringify(S.stageStates || {}), JSON.stringify(S.stageVecDone || {}),
+        (S.chunkResults || []).map(t => String(t || '').length).join(','),
+        (S.plots?.main?.length || 0), (S.plots?.sub?.length || 0), (S.plots?.pivot?.length || 0),
+    ].join('|');
+}
+
 function niUpdateStageInjectionBudgetNote(result = null, {
     visible,
 } = {}) {
@@ -945,7 +959,14 @@ function niUpdateStageInjectionBudgetNote(result = null, {
     let displayResult = result;
     let shouldDisplay = visible;
     if (displayResult == null && shouldDisplay !== false) {
-        displayResult = niBuildStageInjectionBudgetPreview();
+        const signature = niStageInjectionBudgetSignature();
+        const cached = S._stageInjBudgetCache;
+        if (cached && cached.signature === signature) {
+            displayResult = cached.result;
+        } else {
+            displayResult = niBuildStageInjectionBudgetPreview();
+            S._stageInjBudgetCache = { signature, result: displayResult };
+        }
         if (shouldDisplay == null) shouldDisplay = !!displayResult;
     }
     if (shouldDisplay == null) shouldDisplay = !!displayResult;
@@ -2235,15 +2256,22 @@ async function dbRemapSourceChunkIndices(indexMap) {
 function mergePlots(state, incoming, chunkIndex) {
     // stageMap key = main数组下标，不能用 chunkIndex 直接查。
     // 这里只记录 _chunkIdx，stageIdx 由 niConfirmStageMap 事后统一回填。
-    // 若阶段已划分且当前节点是续跑补充的，通过已有节点的 _chunkIdx 反查阶段号。
-    let stageIdx = null;
+    // 续跑/重洗补回节点时，尽量沿用原节点各自的阶段归属：同一个清洗分段可能通过
+    // 阶段槽位被分到多个阶段，统一借用"首个命中节点"的阶段会把其余节点归错阶段。
+    let stageIdxFallback = null;
+    const stageByNodeId = new Map();
+    const stageByTitle = new Map();
     if (state.stageMapN > 0) {
-        // 在已有节点中找同 chunkIndex 的节点，借用其 stageIdx
-        const ref = [...(state.plots.main || []), ...(state.plots.sub || []), ...(state.plots.pivot || [])]
-            .find(p => p._chunkIdx === chunkIndex && p.stageIdx != null);
-        if (ref) {
-            stageIdx = ref.stageIdx;
-        }
+        const existing = [...(state.plots.main || []), ...(state.plots.sub || []), ...(state.plots.pivot || [])]
+            .filter(p => p._chunkIdx === chunkIndex && p.stageIdx != null);
+        existing.forEach(p => {
+            const nodeId = p._nodeId || p.node_id || p.nodeId || p.id;
+            if (nodeId) stageByNodeId.set(String(nodeId), p.stageIdx);
+            const title = String(p.title || '').trim();
+            if (title && !stageByTitle.has(title)) stageByTitle.set(title, p.stageIdx);
+        });
+        const distinctStages = new Set(existing.map(p => p.stageIdx));
+        if (distinctStages.size === 1) stageIdxFallback = [...distinctStages][0];
     }
 
     const plots = niNormalizeIncomingPlots(incoming)
@@ -2258,6 +2286,14 @@ function mergePlots(state, incoming, chunkIndex) {
     plots.forEach((p, localIndex) => {
         const bucket = ['main', 'sub', 'pivot'].includes(p.type) ? p.type : 'main';
         const chunkOrder = niPlotChunkOrder(p, p._sourceIdx ?? localIndex);
+        const incomingNodeId = p._nodeId || p.node_id || p.nodeId || p.id;
+        const incomingTitle = String(p.title || '').trim();
+        // 优先按稳定节点 id 匹配原阶段，其次按标题，最后才用"该分段只有唯一阶段"的兜底；
+        // 无法判定时保留 null，交给阶段划分流程确认，避免静默归错。
+        const matchedStage = incomingNodeId && stageByNodeId.has(String(incomingNodeId))
+            ? stageByNodeId.get(String(incomingNodeId))
+            : (incomingTitle && stageByTitle.has(incomingTitle) ? stageByTitle.get(incomingTitle) : stageIdxFallback);
+        const stageIdx = matchedStage ?? null;
         const newPlot = {
             _nodeId: p._nodeId || p.node_id || p.nodeId || p.id || `${bucket}:${chunkIndex}:${chunkOrder}:${niHashShort(`${p.title || ''}\n${p.body || ''}`)}`,
             type: bucket,
@@ -3121,6 +3157,27 @@ function niUpdateVecOffBtn() {
 }
 
 // 异步对比 IndexedDB 与应有块数，决定是否显示补全按钮
+// 结果缓存：本函数由 niUpdateVecOffBtn 在阶段开关、向量开关等高频 UI 路径触发，
+// 每次都全量读 IndexedDB 向量行并重建分段桶代价很大。用「向量/分段/阶段状态」签名
+// 缓存结论，这些状态一变（向量化完成、清洗补齐、阶段重划）签名就变。
+const NI_VEC_FILL_CHECK_TTL_MS = 15000;
+function niVecFillCheckSignature() {
+    const chunkStageSignature = Object.keys(S.chunkStageMap || {})
+        .sort((a, b) => Number(a) - Number(b))
+        .map(key => {
+            const value = S.chunkStageMap[key];
+            const stages = value instanceof Set ? [...value] : (Array.isArray(value) ? value : []);
+            return `${key}:${stages.join(',')}`;
+        })
+        .join(';');
+    return [
+        S.vecDone ? 1 : 0,
+        S.chunkStatus.length,
+        (S.chunkStatus || []).join(''),
+        JSON.stringify(S.stageVecDone || {}),
+        chunkStageSignature,
+    ].join('|');
+}
 async function niCheckFillBtnVisibility() {
     const fillBtn = q('#ni-btn-vec-fill');
     if (!fillBtn || S._vecRunning) return;
@@ -3130,6 +3187,13 @@ async function niCheckFillBtnVisibility() {
     }
     // 避免并发重复检查
     if (S._vecCheckPending) return;
+    const signature = niVecFillCheckSignature();
+    const cached = S._vecFillCheckCache;
+    if (cached && cached.signature === signature && Date.now() - cached.at < NI_VEC_FILL_CHECK_TTL_MS) {
+        S._vecFillVisible = cached.hasMissing;
+        fillBtn.style.display = cached.hasMissing ? 'flex' : 'none';
+        return;
+    }
     S._vecCheckPending = true;
     try {
         if (!niHasLoadedChunks()) {
@@ -3148,9 +3212,10 @@ async function niCheckFillBtnVisibility() {
             if (!vecText.trim()) continue;
             const assignedStages = getAssignedStagesForChunk(S, i);
             if (!assignedStages.length) continue;
+            // 同一分段只切一次，避免按阶段重复 splitText
+            const subChunks = splitText(vecText, 500);
             for (const si of assignedStages) {
                 if (!stageBuckets[si]) stageBuckets[si] = [];
-                const subChunks = splitText(vecText, 500);
                 stageBuckets[si].push(...subChunks);
             }
         }
@@ -3163,8 +3228,9 @@ async function niCheckFillBtnVisibility() {
                 if (!existingKeys.has(`s${si}_c${ci}`)) { hasMissing = true; break outer; }
             }
         }
-        const fb = q('#ni-btn-vec-fill');
         S._vecFillVisible = hasMissing;
+        S._vecFillCheckCache = { signature, at: Date.now(), hasMissing };
+        const fb = q('#ni-btn-vec-fill');
         if (fb && !S._vecRunning) fb.style.display = hasMissing ? 'flex' : 'none';
     } catch(e) {
         console.warn('[NI] niCheckFillBtnVisibility 失败:', e);
