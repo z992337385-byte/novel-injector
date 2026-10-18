@@ -723,26 +723,28 @@ function niSaveSettings({ scheduleAutosave = true } = {}) {
     cfg.vecKey      = q('#ni-vec-key')?.value || cfg.vecKey;
     cfg.vecUrl      = q('#ni-vec-url')?.value || cfg.vecUrl;
     cfg.vecModel    = q('#ni-vec-model')?.value || cfg.vecModel;
-    cfg.injDepth    = parseInt(q('#ni-inj-depth')?.value) || DEFAULT_SETTINGS.injDepth;
-    cfg.vecInjPos   = parseInt(q('#ni-vec-inj-pos')?.value) ?? DEFAULT_SETTINGS.vecInjPos;
-    cfg.vecInjRole  = parseInt(q('#ni-vec-inj-role')?.value) ?? DEFAULT_SETTINGS.vecInjRole;
-    cfg.recallTopK  = parseInt(q('#ni-recall-topk')?.value) || DEFAULT_SETTINGS.recallTopK;
-    cfg.recallThresh= parseFloat(q('#ni-recall-thresh')?.value) ?? DEFAULT_SETTINGS.recallThresh;
+    // 数值设置统一用有界读取：既保留合法的 0（注入深度/位置/角色都可能是 0），
+    // 也避免用户清空输入框时把 NaN 写进设置、序列化成 null 持久残留。
+    cfg.injDepth    = niCfgBoundInt('#ni-inj-depth', DEFAULT_SETTINGS.injDepth, 0, 9999);
+    cfg.vecInjPos   = niCfgBoundInt('#ni-vec-inj-pos', DEFAULT_SETTINGS.vecInjPos, 0, 2);
+    cfg.vecInjRole  = niCfgBoundInt('#ni-vec-inj-role', DEFAULT_SETTINGS.vecInjRole, 0, 2);
+    cfg.recallTopK  = niCfgBoundInt('#ni-recall-topk', DEFAULT_SETTINGS.recallTopK, 1, 20);
+    cfg.recallThresh= niCfgFloat('#ni-recall-thresh', DEFAULT_SETTINGS.recallThresh, 0, 1);
     cfg.recallHistoryTopK = niCfgBoundInt('#ni-recall-history-topk', DEFAULT_SETTINGS.recallHistoryTopK, 0, 20);
     cfg.vecMsgTag   = (q('#ni-vec-msg-tag')?.value || '').trim();
-    cfg.vecMsgCount = parseInt(q('#ni-vec-msg-count')?.value) || DEFAULT_SETTINGS.vecMsgCount;
-    cfg.charInjPos  = parseInt(q('#ni-char-inj-pos')?.value) ?? DEFAULT_SETTINGS.charInjPos;
-    cfg.charInjDepth= parseInt(q('#ni-char-inj-depth')?.value) ?? DEFAULT_SETTINGS.charInjDepth;
-    cfg.charInjRole = parseInt(q('#ni-char-inj-role')?.value) ?? DEFAULT_SETTINGS.charInjRole;
+    cfg.vecMsgCount = niCfgBoundInt('#ni-vec-msg-count', DEFAULT_SETTINGS.vecMsgCount, 1, 30);
+    cfg.charInjPos  = niCfgBoundInt('#ni-char-inj-pos', DEFAULT_SETTINGS.charInjPos, 0, 2);
+    cfg.charInjDepth= niCfgBoundInt('#ni-char-inj-depth', DEFAULT_SETTINGS.charInjDepth, 0, 9999);
+    cfg.charInjRole = niCfgBoundInt('#ni-char-inj-role', DEFAULT_SETTINGS.charInjRole, 0, 2);
     cfg.charAutoSleepEnabled = q('#ni-char-auto-sleep-btn')
         ? q('#ni-char-auto-sleep-btn').classList.contains('on')
         : (cfg.charAutoSleepEnabled ?? DEFAULT_SETTINGS.charAutoSleepEnabled);
     cfg.charPageSize = Math.max(1, Math.min(200,
         parseInt(q('#ni-char-page-size')?.value ?? cfg.charPageSize, 10) || DEFAULT_SETTINGS.charPageSize
     ));
-    cfg.plotInjPos  = parseInt(q('#ni-plot-inj-pos')?.value) ?? DEFAULT_SETTINGS.plotInjPos;
-    cfg.plotInjDepth= parseInt(q('#ni-plot-inj-depth')?.value) ?? DEFAULT_SETTINGS.plotInjDepth;
-    cfg.plotInjRole = parseInt(q('#ni-plot-inj-role')?.value) ?? DEFAULT_SETTINGS.plotInjRole;
+    cfg.plotInjPos  = niCfgBoundInt('#ni-plot-inj-pos', DEFAULT_SETTINGS.plotInjPos, 0, 2);
+    cfg.plotInjDepth= niCfgBoundInt('#ni-plot-inj-depth', DEFAULT_SETTINGS.plotInjDepth, 0, 9999);
+    cfg.plotInjRole = niCfgBoundInt('#ni-plot-inj-role', DEFAULT_SETTINGS.plotInjRole, 0, 2);
     cfg.plotInjMaxTokens = niNormalizeRawInjectionMaxTokens(
         q('#ni-plot-inj-max-tokens')?.value ?? cfg.plotInjMaxTokens,
         DEFAULT_SETTINGS.plotInjMaxTokens,
@@ -754,15 +756,15 @@ function niSaveSettings({ scheduleAutosave = true } = {}) {
         parseInt(q('#ni-lib-page-size')?.value ?? cfg.novelLibraryPageSize, 10) || DEFAULT_SETTINGS.novelLibraryPageSize
     ));
     cfg.devPrompt   = q('#ni-dev-pt-content')?.value || cfg.devPrompt || DEFAULT_SETTINGS.devPrompt;
-    cfg.devInjPos   = niCfgInt('#ni-dev-inj-pos', DEFAULT_SETTINGS.devInjPos);
-    cfg.devInjDepth = niCfgInt('#ni-dev-inj-depth', DEFAULT_SETTINGS.devInjDepth);
-    cfg.devInjRole  = niCfgInt('#ni-dev-inj-role', DEFAULT_SETTINGS.devInjRole);
+    cfg.devInjPos   = niCfgBoundInt('#ni-dev-inj-pos', DEFAULT_SETTINGS.devInjPos, 0, 2);
+    cfg.devInjDepth = niCfgBoundInt('#ni-dev-inj-depth', DEFAULT_SETTINGS.devInjDepth, 0, 9999);
+    cfg.devInjRole  = niCfgBoundInt('#ni-dev-inj-role', DEFAULT_SETTINGS.devInjRole, 0, 2);
     cfg.devAutoUpdateEnabled = q('#ni-dev-auto-enabled')?.checked ?? (cfg.devAutoUpdateEnabled ?? DEFAULT_SETTINGS.devAutoUpdateEnabled);
     cfg.devAutoUpdateEvery = niCfgBoundInt('#ni-dev-auto-every', DEFAULT_SETTINGS.devAutoUpdateEvery, 1, 9999);
     cfg.devAutoUpdateBatch = niCfgBoundInt('#ni-dev-auto-batch', DEFAULT_SETTINGS.devAutoUpdateBatch, 1, 200);
     cfg.devManualMsgCount = niCfgBoundInt('#ni-dev-manual-msg-count', DEFAULT_SETTINGS.devManualMsgCount, 1, 200);
     cfg.rawInjMode  = niNormalizeRawInjMode(q('#ni-raw-inj-mode')?.value ?? cfg.rawInjMode);
-    cfg.chunkKb     = parseInt(q('#ni-chunk-kb')?.value) || DEFAULT_SETTINGS.chunkKb;
+    cfg.chunkKb     = niCfgBoundInt('#ni-chunk-kb', DEFAULT_SETTINGS.chunkKb, 10, 100000);
     cfg.customPrompt    = q('#ni-pt-content')?.value || CLEAN_PROMPT;
     cfg.roleplayPrompt  = q('#ni-stage-pt-content')?.value || extension_settings[EXT_NAME]?.roleplayPrompt || ROLEPLAY_PROMPT;
     cfg.roleplayEnabled = q('#ni-stage-pt-enabled')?.checked ?? (extension_settings[EXT_NAME]?.roleplayEnabled !== false);
@@ -785,12 +787,13 @@ function niSaveSettings({ scheduleAutosave = true } = {}) {
     cfg.globalTailInjPos = niCfgInt('#ni-global-tail-inj-pos', DEFAULT_SETTINGS.globalTailInjPos);
     cfg.globalTailInjDepth = niCfgInt('#ni-global-tail-inj-depth', DEFAULT_SETTINGS.globalTailInjDepth);
     cfg.globalTailInjRole = niCfgInt('#ni-global-tail-inj-role', DEFAULT_SETTINGS.globalTailInjRole);
-    cfg.apiTimeoutMin = Math.max(1, parseInt(q('#ni-api-timeout')?.value) || DEFAULT_SETTINGS.apiTimeoutMin);
-    cfg.apiRateLimit  = Math.max(0, parseInt(q('#ni-rate-limit')?.value) ?? DEFAULT_SETTINGS.apiRateLimit);
+    // 上限 1440 分钟：浏览器 setTimeout 的延迟按 32 位有符号处理，过大会溢出成「立即超时」
+    cfg.apiTimeoutMin = niCfgBoundInt('#ni-api-timeout', DEFAULT_SETTINGS.apiTimeoutMin, 1, 1440);
+    cfg.apiRateLimit  = niCfgBoundInt('#ni-rate-limit', DEFAULT_SETTINGS.apiRateLimit, 0, 9999);
     cfg.apiConcurrency = niCfgBoundInt('#ni-api-concurrency', DEFAULT_SETTINGS.apiConcurrency, 0, 99);
-    cfg.cleanApi2RateLimit = Math.max(0, parseInt(q('#ni-clean-api2-rate')?.value) || 0);
+    cfg.cleanApi2RateLimit = niCfgBoundInt('#ni-clean-api2-rate', 0, 0, 9999);
     cfg.cleanApi2Concurrency = niCfgBoundInt('#ni-clean-api2-concurrency', cfg.cleanApi2Concurrency ?? 0, 0, 99);
-    cfg.vecRateLimit  = Math.max(0, parseInt(q('#ni-vec-rate-limit')?.value) ?? DEFAULT_SETTINGS.vecRateLimit);
+    cfg.vecRateLimit  = niCfgBoundInt('#ni-vec-rate-limit', DEFAULT_SETTINGS.vecRateLimit, 0, 9999);
     cfg.vecConcurrency = niCfgBoundInt('#ni-vec-concurrency', DEFAULT_SETTINGS.vecConcurrency, 0, 99);
     cfg.vecBatchSize = niCfgBoundInt('#ni-vec-batch-size', DEFAULT_SETTINGS.vecBatchSize, 1, 100);
     // 持久化运行时数据
@@ -813,16 +816,16 @@ function niSaveSettings({ scheduleAutosave = true } = {}) {
     cfg._cleanDone     = S.cleanDone;
     cfg._worldCategories = niGetWorldCategories();
     niClearLegacyDeviationSettings();
-    cfg.worldInjPos   = parseInt(q('#ni-world-inj-pos')?.value)   ?? DEFAULT_SETTINGS.worldInjPos;
-    cfg.worldInjDepth = parseInt(q('#ni-world-inj-depth')?.value)  ?? DEFAULT_SETTINGS.worldInjDepth;
-    cfg.worldInjRole  = parseInt(q('#ni-world-inj-role')?.value)   ?? DEFAULT_SETTINGS.worldInjRole;
+    cfg.worldInjPos   = niCfgBoundInt('#ni-world-inj-pos', DEFAULT_SETTINGS.worldInjPos, 0, 2);
+    cfg.worldInjDepth = niCfgBoundInt('#ni-world-inj-depth', DEFAULT_SETTINGS.worldInjDepth, 0, 9999);
+    cfg.worldInjRole  = niCfgBoundInt('#ni-world-inj-role', DEFAULT_SETTINGS.worldInjRole, 0, 2);
 
     // 文风设置
-    cfg.styleInjPos   = parseInt(q('#ni-style-inj-pos2')?.value)   ?? DEFAULT_SETTINGS.styleInjPos;
-    cfg.styleInjDepth = parseInt(q('#ni-style-inj-depth2')?.value)  ?? DEFAULT_SETTINGS.styleInjDepth;
-    cfg.styleInjRole  = parseInt(q('#ni-style-inj-role2')?.value)   ?? DEFAULT_SETTINGS.styleInjRole;
-    cfg.styleSampleLen= parseInt(q('#ni-style-sample-len')?.value) || DEFAULT_SETTINGS.styleSampleLen;
-    cfg.styleChunkIdx = parseInt(q('#ni-style-chunk-sel')?.value)  || 0;
+    cfg.styleInjPos   = niCfgBoundInt('#ni-style-inj-pos2', DEFAULT_SETTINGS.styleInjPos, 0, 2);
+    cfg.styleInjDepth = niCfgBoundInt('#ni-style-inj-depth2', DEFAULT_SETTINGS.styleInjDepth, 0, 9999);
+    cfg.styleInjRole  = niCfgBoundInt('#ni-style-inj-role2', DEFAULT_SETTINGS.styleInjRole, 0, 2);
+    cfg.styleSampleLen= niCfgBoundInt('#ni-style-sample-len', DEFAULT_SETTINGS.styleSampleLen, 100, 100000);
+    cfg.styleChunkIdx = niCfgBoundInt('#ni-style-chunk-sel', 0, 0, 100000);
     cfg.styleMode     = q('#ni-style-mode')?.value                 ?? DEFAULT_SETTINGS.styleMode;
     cfg.autoSaveEnabled = q('#ni-autosave-chk')?.checked ?? (cfg.autoSaveEnabled ?? DEFAULT_SETTINGS.autoSaveEnabled);
 
@@ -1129,6 +1132,12 @@ const niBoundIntValue = (value, fallback, min = 0, max = 9999) => {
 const niCfgBoundInt = (sel, fallback, min = 0, max = 9999) => {
     return niBoundIntValue(q(sel)?.value, fallback, min, max);
 };
+const niBoundFloatValue = (value, fallback, min = 0, max = 1) => {
+    const n = parseFloat(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(min, Math.min(max, n));
+};
+const niCfgFloat = (sel, fallback, min = 0, max = 1) => niBoundFloatValue(q(sel)?.value, fallback, min, max);
 
 function niTopbarIconVisible() {
     const cfg = extension_settings[EXT_NAME] || {};
@@ -2112,6 +2121,7 @@ const {
     logger: console,
     dollar: $,
     getContext,
+    getCurrentChatId,
     getAllPlotsInStoryOrder,
     ensurePlotNodeId: niEnsurePlotNodeId,
     resolveStageIdx: niResolveTransbookPlotStageIdx,
