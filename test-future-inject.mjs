@@ -203,6 +203,49 @@ const baseOptions = {
     console.log('用例11 前情召回条数接入召回服务: 通过');
 }
 
+// 12) curNode 自身缺 stageIdx 时，用列表里真实节点的阶段兜底，不把已演阶段当未来
+{
+    const list = [
+        node('s1a', 1, { title: '阶段一节点A' }),
+        node('s1b', 1, { title: '阶段一节点B' }),
+        node('s2a', 2, { title: '阶段二节点A' }),
+        node('s3a', 3, { title: '阶段三节点A' }),
+    ];
+    const cur = { id: 's1b', title: '阶段一节点B', body: '', done: false }; // 故意不带 stageIdx
+    const text = niBuildFuturePlotBlock({
+        nodes: list,
+        curNode: cur,
+        stageTitles: { 1: '一', 2: '二', 3: '三' },
+        stageSummaries: { 1: '一概括', 2: '二概括', 3: '三概括' },
+        totalStages: 3,
+        nodeCount: 0,
+        stageCount: 2,
+    });
+    assert(!text.includes('第 1 阶段'), '缺 stageIdx 时不能把当前阶段当后续', text);
+    assert(text.includes('第 2 阶段「二」：二概括'), '从当前节点真实阶段之后开始（阶段2）', text);
+    assert(text.includes('第 3 阶段「三」：三概括'), '继续取下一个阶段（阶段3）', text);
+    console.log('用例12 当前节点缺 stageIdx 兜底: 通过');
+}
+
+// 13) totalStages 被污染成极大值时不空转（有迭代上限）
+{
+    const list = [node('a', 1, { title: 'A' }), node('b', 2, { title: 'B' })];
+    const started = Date.now();
+    niBuildFuturePlotBlock({
+        nodes: list,
+        curNode: list[0],
+        stageTitles: {},
+        stageSummaries: {},
+        stageStates: {},
+        totalStages: 100000000,
+        nodeCount: 1,
+        stageCount: 3,
+    });
+    const elapsed = Date.now() - started;
+    assert(elapsed < 1000, `异常 totalStages 不应造成长时间空转（实际 ${elapsed}ms）`);
+    console.log(`用例13 异常阶段总数保护: 通过（${elapsed}ms）`);
+}
+
 if (failures) {
     console.error(`未来剧情注入测试失败：${failures} 项`);
     process.exit(1);
