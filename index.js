@@ -1948,6 +1948,7 @@ const {
     isCleanDetached: () => niIsCleanDetached(),
     getCleanSessionInfo: () => niGetCleanSessionInfo(),
     forceCleanSessionHome: (...args) => niForceCleanSessionHome(...args),
+    flushAutosave: (...args) => niAutosave?.flush?.(...args),
 });
 
 niAutosave = createAutosaveController({
@@ -2037,6 +2038,7 @@ const {
     prepareCleanRequest: niCleanRequests.prepareCleanRequest,
     callCleanTaskApi: niCleanRequests.callCleanTaskApi,
     abortCleanRequestScopes: () => niAbortRequestScopes('clean'),
+    flushAutosave: (...args) => niAutosave?.flush?.(...args),
     finishCleanRequest: niCleanRequests.finishCleanRequest,
     capturePlotCheckpointMemory,
     captureCharacterMemory,

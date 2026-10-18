@@ -2,10 +2,13 @@
 // 1) 世界设定「删空最后一个大类」后不再被默认大类顶替
 // 2) 穿书节点正文为空时，阶段直注取文必须回退（返回 null）而不是注入一行空标题
 // 3) ZIP 解析只接受本扩展导出的 store(0) 格式，压缩/数据描述符结构明确报错
+// 4) 世界提示词替换不被 $& / $' 等替换模式序列腐蚀，且重复占位符全部替换
+// 5) 自动保存 flush：切换前清掉防抖并落盘，关闭自动保存时不产生保存
 // 运行：node test-fix-regressions.mjs（失败非零退出）
-import { niSelectWorldCategories, niCloneWorldDefaultCategories } from './lib/world-system.js';
+import { niSelectWorldCategories, niCloneWorldDefaultCategories, niBuildWorldExtractPrompt, niBuildWorldShrinkPrompt } from './lib/world-system.js';
 import { niBuildTransbookStageDetailText } from './lib/injection-system.js';
 import { _parseZip } from './lib/storage-system.js';
+import { createAutosaveController } from './lib/autosave-system.js';
 
 let failures = 0;
 const assert = (cond, ...args) => {
@@ -119,6 +122,46 @@ const DEFAULTS = [
     try { _parseZip(buildZip({ flags: 0x0008 })); } catch (e) { descriptorError = e; }
     assert(descriptorError && /数据描述符/.test(descriptorError.message), '数据描述符结构必须明确报错', descriptorError?.message);
     console.log('用例8 ZIP 解析校验: 通过');
+}
+
+// 9) 世界提示词替换：$ 序列不被当作替换模式，重复占位符全部替换
+{
+    const tpl = 'A:{CATEGORY} B:{NODES} C:{CATEGORY}';
+    const out = niBuildWorldExtractPrompt(tpl, '地理$&环境', '正文$`$123');
+    assert(out === 'A:地理$&环境 B:正文$`$123 C:地理$&环境', '提取提示词应原样保留替换内容且全部替换', out);
+    const shrink = niBuildWorldShrinkPrompt('X{CONTENT}Y', '内容$&$2');
+    assert(shrink === 'X内容$&$2Y', '缩略提示词替换应原样保留', shrink);
+    console.log('用例9 世界提示词替换安全: 通过');
+}
+
+// 10) 自动保存 flush：切换前清防抖并落盘；关闭时不做任何保存
+{
+    const state = { novelKey: 'A', fileLoaded: true };
+    const settings = { autoSaveEnabled: true, novelLibrary: [{ data: { _novelKey: 'A' } }] };
+    const calls = [];
+    let pendingTimer = null;
+    const controller = createAutosaveController({
+        state,
+        getSettings: () => settings,
+        saveSettingsDebounced: () => {},
+        saveNovelSnapshot: async () => { calls.push('create'); return true; },
+        updateNovelSnapshot: async idx => { calls.push(`update:${idx}`); return true; },
+        renderNovelLibrary: () => {},
+        setTimer: callback => { pendingTimer = callback; return 1; },
+        clearTimer: () => { pendingTimer = null; },
+        logger: { warn: () => {} },
+    });
+    controller.schedule(); // 进入防抖窗口，不会立即保存
+    assert(typeof pendingTimer === 'function', 'schedule 应挂起防抖计时器');
+    await controller.flush();
+    assert(calls.length === 1 && calls[0] === 'update:0', 'flush 应把待保存数据落盘到现有快照', calls);
+    assert(!pendingTimer, 'flush 应清掉防抖计时器');
+
+    const before = calls.length;
+    settings.autoSaveEnabled = false;
+    await controller.flush();
+    assert(calls.length === before, '自动保存关闭时 flush 不应产生保存', calls);
+    console.log('用例10 自动保存 flush: 通过');
 }
 
 if (failures) {
