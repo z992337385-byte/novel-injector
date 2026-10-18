@@ -1073,6 +1073,12 @@ function syncSettingsToUI() {
     if (stylePtEl) stylePtEl.value = cfg.stylePrompt || STYLE_PROMPT;
     const devPtEl = q('#ni-dev-pt-content');
     if (devPtEl) devPtEl.value = cfg.devPrompt || DEFAULT_SETTINGS.devPrompt;
+    // 阶段演绎提示词：开关与内容都要回填，否则模板默认值会在任意一次保存时
+    // 覆盖用户已存的 roleplayEnabled / roleplayPrompt（只有展开面板时才回填是不够的）。
+    const stagePtChk = q('#ni-stage-pt-enabled');
+    if (stagePtChk) stagePtChk.checked = cfg.roleplayEnabled !== false;
+    const stagePtTa = q('#ni-stage-pt-content');
+    if (stagePtTa) stagePtTa.value = cfg.roleplayPrompt || ROLEPLAY_PROMPT;
     niSyncDeviationResultUI({ collapsed: true });
     // Bug修复②③：始终刷新文风结果 UI，有内容则显示，无内容则隐藏
     {
@@ -1491,8 +1497,31 @@ const {
     getRequestHeaders,
     getCurrentAbortController: () => S._currentAbortController,
     setCurrentAbortController: controller => { S._currentAbortController = controller; },
+    // 在飞请求按 role 登记：暂停清洗只中止 clean 通道的请求，
+    // 不会误杀偏差分析/人设更新等并行调用（原先共用一个全局单槽会被覆盖）。
+    registerRequestScope: (controller, role) => {
+        const key = role || 'main';
+        if (!(S._niRequestScopes instanceof Map)) S._niRequestScopes = new Map();
+        if (!S._niRequestScopes.has(key)) S._niRequestScopes.set(key, new Set());
+        S._niRequestScopes.get(key).add(controller);
+    },
+    unregisterRequestScope: controller => {
+        if (!(S._niRequestScopes instanceof Map)) return;
+        S._niRequestScopes.forEach(set => set.delete(controller));
+    },
     fetch,
 });
+
+// 按作用域批量中止在飞请求（role 为空时按 main 处理）
+function niAbortRequestScopes(role = 'main') {
+    const set = S._niRequestScopes instanceof Map
+        ? S._niRequestScopes.get(role || 'main')
+        : null;
+    if (!set) return;
+    [...set].forEach(controller => {
+        try { controller.abort(); } catch (_) { /* 已结束的控制器忽略 */ }
+    });
+}
 
 const niCleanRequests = createCleanRequestTools({
     getSettings: () => extension_settings[EXT_NAME] || {},
@@ -2007,6 +2036,7 @@ const {
     callCleanApi,
     prepareCleanRequest: niCleanRequests.prepareCleanRequest,
     callCleanTaskApi: niCleanRequests.callCleanTaskApi,
+    abortCleanRequestScopes: () => niAbortRequestScopes('clean'),
     finishCleanRequest: niCleanRequests.finishCleanRequest,
     capturePlotCheckpointMemory,
     captureCharacterMemory,

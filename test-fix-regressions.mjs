@@ -1,9 +1,11 @@
 // 修复项回归测试（纯函数部分）：
 // 1) 世界设定「删空最后一个大类」后不再被默认大类顶替
 // 2) 穿书节点正文为空时，阶段直注取文必须回退（返回 null）而不是注入一行空标题
+// 3) ZIP 解析只接受本扩展导出的 store(0) 格式，压缩/数据描述符结构明确报错
 // 运行：node test-fix-regressions.mjs（失败非零退出）
 import { niSelectWorldCategories, niCloneWorldDefaultCategories } from './lib/world-system.js';
 import { niBuildTransbookStageDetailText } from './lib/injection-system.js';
+import { _parseZip } from './lib/storage-system.js';
 
 let failures = 0;
 const assert = (cond, ...args) => {
@@ -78,6 +80,45 @@ const DEFAULTS = [
     const mismatch = niBuildTransbookStageDetailText(3, { stageIdx: 2, title: 'n', body: '正文' });
     assert(mismatch === null, '节点阶段与请求阶段不一致时返回 null', mismatch);
     console.log('用例7 阶段不匹配保护: 通过');
+}
+
+// 8) ZIP 解析：store(0) 正常解析，deflate 与数据描述符结构明确报错
+{
+    const enc = new TextEncoder();
+    const buildZip = ({ name = 'a.json', data = '{"ok":1}', method = 0, flags = 0 }) => {
+        const nameBytes = enc.encode(name);
+        const dataBytes = enc.encode(data);
+        const buf = new ArrayBuffer(30 + nameBytes.length + dataBytes.length);
+        const view = new DataView(buf);
+        const u8 = new Uint8Array(buf);
+        view.setUint32(0, 0x04034b50, true);
+        view.setUint16(4, 20, true);           // version needed
+        view.setUint16(6, flags, true);        // general purpose flags
+        view.setUint16(8, method, true);       // compression method
+        view.setUint16(10, 0, true);           // mod time
+        view.setUint16(12, 0, true);           // mod date
+        view.setUint32(14, 0, true);           // crc32（解析器不校验）
+        view.setUint32(18, dataBytes.length, true);
+        view.setUint32(22, dataBytes.length, true);
+        view.setUint16(26, nameBytes.length, true);
+        view.setUint16(28, 0, true);
+        u8.set(nameBytes, 30);
+        u8.set(dataBytes, 30 + nameBytes.length);
+        return buf;
+    };
+
+    const parsed = _parseZip(buildZip({}));
+    const decoded = new TextDecoder().decode(parsed['a.json']);
+    assert(decoded === '{"ok":1}', 'store(0) ZIP 应正常解析', decoded);
+
+    let deflateError = null;
+    try { _parseZip(buildZip({ method: 8 })); } catch (e) { deflateError = e; }
+    assert(deflateError && /压缩方式/.test(deflateError.message), 'deflate 压缩必须明确报错', deflateError?.message);
+
+    let descriptorError = null;
+    try { _parseZip(buildZip({ flags: 0x0008 })); } catch (e) { descriptorError = e; }
+    assert(descriptorError && /数据描述符/.test(descriptorError.message), '数据描述符结构必须明确报错', descriptorError?.message);
+    console.log('用例8 ZIP 解析校验: 通过');
 }
 
 if (failures) {
